@@ -1,0 +1,22 @@
+name: Run Example Workflow 🏃
+run-name: ${{ github.actor }} has triggered Running a Workflow 🏃
+
+on:
+  workflow_dispatch:
+
+jobs:
+  example-summary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Output Some Markdown Code in Summary 👀
+        run: |
+          {
+            echo '# Yay, you ran this workflow! 🎉'
+            echo ''
+            echo '## Workflow Details'
+            echo '- Branch: ${{ github.ref }}'
+            echo '- Commit: ${{ github.sha }}'
+            echo '- Actor: ${{ github.actor }}'
+            echo ''
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY

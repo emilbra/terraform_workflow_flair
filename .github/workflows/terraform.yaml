@@ -1,0 +1,147 @@
+name: Terraform Init and Plan 🏗️
+
+run-name: ${{ github.actor }} has iniated a Terraform Init and Plan for ${{ inputs.terraform_environment }}🏗️
+on:
+  workflow_call:
+    inputs:
+      terraform_environment:
+        description: "What environment are we deploying to?"
+        required: true
+        type: string
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_CLI_ARGS: "-no-color"
+  TF_RUN_IDENTIFIER: "${{ github.event.repository.name }}-${{ github.run_number }}-${{ inputs.terraform_environment }}"
+
+  # This is for authentication (Azure). You can change this to whatever you use, as described in the relevant provider's documentation.
+  ARM_CLIENT_ID: ${{ secrets.CLIENT_ID }}
+  ARM_CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.TENANT_ID }}
+
+jobs:
+  terraform_init_and_plan:
+    permissions:
+      contents: read
+    runs-on:
+      group: platform
+    steps:
+      - uses: actions/checkout@v4
+        # this sets up Terraform
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.0
+
+      #   Generated token lives for a hour, and it will get automatically revoked after job finishes
+      #   The token is masked, it cannot be logged accidentally.
+      - name: Get GitHub App Token
+        id: auth
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.TERRAFORM_REPO_READER_APP_ID  }}
+          private-key: ${{ secrets.TERRAFORM_REPO_READER_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      #   # Set up git config to use the token. The module source attribute should still be set usual way, e.g. source = github.com/bn-apps/mymodule
+      - name: Git Config
+        run: |
+          git config --global url."https://x-access-token:${{ steps.auth.outputs.token }}@github.com".insteadOf "https://github.com"
+
+      - name: Terraform Init for ${{ inputs.terraform_environment }} 🏗️
+        run: |
+          if [[ "${{ github.base_ref }}" == "main" ]]; then
+            terraform init -reconfigure -input=false -backend-config="env/${{ inputs.terraform_environment }}/backend.tfvars" -lock=true
+          else
+            terraform init -reconfigure -input=false -backend-config="env/${{ inputs.terraform_environment }}/backend.tfvars" -lock=false
+          fi
+        id: terraform_init
+
+      - name: Terraform Plan for ${{ inputs.terraform_environment }} ✍️
+        run: |
+          terraform plan -input=false -var-file="env/${{ inputs.terraform_environment }}/masterdata.tfvars" -parallelism=100 -lock=false -out=tfplan-${{ env.TF_RUN_IDENTIFIER}}
+        id: terraform_plan
+
+      - name: Output Terraform Plan in Summary 👀
+        run: |
+          {
+            echo '# Successfully ran Terraform Plan for ${{ inputs.terraform_environment }} :rocket:'
+            echo ''
+            echo '## Workflow Details'
+            echo '- Branch: ${{ github.ref }}'
+            echo '- Commit: ${{ github.sha }}'
+            echo '- Actor: ${{ github.actor }}'
+            echo ''
+            echo '## Terraform Plan'
+            echo '```hcl'
+            terraform show -no-color tfplan-${{ env.TF_RUN_IDENTIFIER }}
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY
+        id: terraform_plan_summary
+
+      - name: Upload tfplan as artifact 📦
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ env.TF_RUN_IDENTIFIER }}
+          path: tfplan-${{ env.TF_RUN_IDENTIFIER }}
+
+      - name: Upload lockfile as artifact 🔒
+        uses: actions/upload-artifact@v4
+        with:
+          name: .terraform.lock.hcl
+          path: .terraform.lock.hcl
+          include-hidden-files: true
+
+  terraform_apply:
+    permissions:
+      contents: read
+    runs-on:
+      group: platform
+    needs: terraform_init_and_plan
+    environment:
+      name: ${{ inputs.terraform_environment }}Deploy
+    if: needs.terraform_init_and_plan.outputs.exitCode == 0 && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.0
+
+      #   Generated token lives for a hour, and it will get automatically revoked after job finishes
+      #   The token is masked, it cannot be logged accidentally.
+      - name: Get GitHub App Token
+        id: auth
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.TERRAFORM_REPO_READER_APP_ID  }}
+          private-key: ${{ secrets.TERRAFORM_REPO_READER_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      #   # Set up git config to use the token. The module source attribute should still be set usual way, e.g. source = github.com/bn-apps/mymodule
+      - name: Git Config
+        run: |
+          git config --global url."https://x-access-token:${{ steps.auth.outputs.token }}@github.com".insteadOf "https://github.com"
+
+      - name: Terraform Init for ${{ inputs.terraform_environment }} 🏗️
+        run: |
+          if [[ "${{ github.base_ref }}" == "main" ]]; then
+            terraform init -reconfigure -input=false -backend-config="env/${{ inputs.terraform_environment }}/backend.tfvars" -lock=true
+          else
+            terraform init -reconfigure -input=false -backend-config="env/${{ inputs.terraform_environment }}/backend.tfvars" -lock=false
+          fi
+        id: terraform_init
+
+      - name: Download tfplan as artifact 📦
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ env.TF_RUN_IDENTIFIER }}
+
+      - name: Download lockfile as artifact 🔒
+        uses: actions/download-artifact@v4
+        with:
+          name: .terraform.lock.hcl
+
+      - name: Terraform Apply for ${{ inputs.terraform_environment }} 🔄🔨
+        run: |
+          terraform apply -auto-approve tfplan-${{ env.TF_RUN_IDENTIFIER }}
+        id: terraform_apply

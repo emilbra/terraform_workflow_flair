@@ -1,0 +1,55 @@
+name: Run Terraform Workflow
+run-name: ${{ github.actor }} has triggered Running Terraform 🌎
+
+# These triggers are purely based on our process. You can and should adjust them to fit your needs.
+# Here, The workflow triggers on push to main branch, pull request to main branch, and manual workflow dispatch.
+# The called workflow itself also contains a conditional "Apply job" that only runs on push to main branch, meaning that Terraform plans can be produced as part of a Pull Request, but contents can be applied before having been merged to main.
+# We also ignore certain files from triggering the workflow.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - .gitignore
+      - .editorconfig
+      - .markdownlint.json
+      - README.md
+      - CHANGELOG.md
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - .gitignore
+      - .editorconfig
+      - .markdownlint.json
+      - README.md
+      - CHANGELOG.md
+
+# Its generally good practice to explicitly define the minimum level of permissions required for the workflow to run.
+
+permissions:
+  contents: read
+
+# Users should be free to define for themselves what number of environments to run the workflow for.
+# In the called workflow, we also attach the workflow runs to a GitHub environment corresponding to the environment being run.
+# Prod, for example, can have an approval gate that members of the team must approve before the workflow can proceed to apply the changes.
+# Other envs, such as dev, probably dont require such a gate and can be safely approved after merge to main.
+
+jobs:
+  call-terraform-workflow-dev:
+    uses: ./terraform.yaml
+    with:
+      terraform_environment: "dev"
+    secrets: inherit
+  call-terraform-workflow-staging:
+    uses: ./terraform.yaml
+    with:
+      terraform_environment: "staging"
+    secrets: inherit
+  call-terraform-workflow-prod:
+    uses: ./terraform.yaml
+    with:
+      terraform_environment: "prod"
+    secrets: inherit
